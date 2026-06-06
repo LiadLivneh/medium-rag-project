@@ -1,11 +1,23 @@
 import os
+from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
+# Load env variables for local testing (Vercel will inject these automatically online)
 load_dotenv()
 
+app = Flask(__name__)
+
+# ==============================================================================
+# ⚠️ IMPORTANT: Update these 3 numbers to match what you used in process_data.py
+# ==============================================================================
+CHUNK_SIZE = 1024  
+OVERLAP_RATIO = 0.2
+TOP_K = 20
+
+# Initialize Models and DB (Doing this globally keeps the app fast)
 emb = AzureOpenAIEmbeddings(
     azure_endpoint="https://api.llmod.ai",
     api_key=os.environ.get("LLMOD_API_KEY"),
@@ -23,30 +35,50 @@ llm = AzureChatOpenAI(
     api_version="2024-02-01",
     azure_deployment="4UHRUIN-gpt-5-mini",
     reasoning_effort="low"
-    )
+)
 
-def run_rag_pipeline(query_text, top_k=20):
-    print(f"Searching for: '{query_text}'...")
+
+@app.route('/api/stats', methods=['GET'])
+def stats():
+    """Endpoint 2: Returns the configuration of the RAG system."""
+    return jsonify({
+        "chunk_size": CHUNK_SIZE,
+        "overlap_ratio": OVERLAP_RATIO,
+        "top_k": TOP_K
+    })
+
+
+@app.route('/api/prompt', methods=['POST'])
+def prompt():
+    """Endpoint 1: Receives a question and returns the AI's answer + context."""
+    data = request.get_json()
     
+    # Safety check in case the user sends a bad request
+    if not data or "question" not in data:
+        return jsonify({"error": "Please provide a JSON with a 'question' key."}), 400
+        
+    query_text = data["question"]
     
+    # 2. Embed the question
     query_embedding = emb.embed_query(query_text)
     
+    # 3. Query Pinecone
     results = index.query(
         vector=query_embedding,
-        top_k=top_k,
+        top_k=TOP_K,
         include_metadata=True
     )
 
     context_chunks = []
     context_text_for_llm = ""
     
-    for match in results['matches']:
-        meta = match['metadata']
+    # 4. Format the retrieved context
+    for match in results.get('matches', []):
+        meta = match.get('metadata', {})
+        
         chunk_data = {
+            "article_id": str(match.get('id', 'N/A')),
             "title": str(meta.get('title', 'N/A')),
-            "author": str(meta.get('author', 'Unknown')),
-            "tags": str(meta.get('tags', 'None')),
-            "url": str(meta.get('url', 'N/A')),
             "chunk": str(meta.get('chunk', '')),
             "score": float(match['score'])
         }
@@ -55,9 +87,6 @@ def run_rag_pipeline(query_text, top_k=20):
         context_text_for_llm += (
             f"--- SOURCE ---\n"
             f"Title: {chunk_data['title']}\n"
-            f"Author: {chunk_data['author']}\n"
-            f"Tags: {chunk_data['tags']}\n"
-            f"URL: {chunk_data['url']}\n"
             f"Content: {chunk_data['chunk']}\n\n"
         )
 
@@ -71,13 +100,16 @@ def run_rag_pipeline(query_text, top_k=20):
     "4. When finding a match, always explain your answer using the given context, quoting or paraphrasing the relevant article passage or metadata when helpful. "
     "5. DO NOT BREAK THE FOURTH WALL. Speak directly to the user and answer the question natively."
 )
+    
     user_prompt = f"Context:\n{context_text_for_llm}\nUser query: {query_text}"
 
+    # 6. Call the LLM
     chat_response = llm.invoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt)
     ])
 
+    # 7. Return the final JSON payload exactly as requested
     final_output = {
         "response": chat_response.content,
         "context": context_chunks,
@@ -87,34 +119,9 @@ def run_rag_pipeline(query_text, top_k=20):
         }
     }
     
-    return final_output
+    return jsonify(final_output)
 
 
+# This allows you to run `python api/index.py` in the terminal to test locally
 if __name__ == "__main__":
-    while True:
-        # Get input from the user
-        test_question = input("\nEnter your query (or type 'quit' to exit): ")
-        
-        # Exit condition
-        if test_question.lower() in ['quit', 'exit', 'q']:
-            break
-            
-        if not test_question.strip():
-            continue
-
-        # Run the pipeline
-        output = run_rag_pipeline(test_question)
-        
-        # Clean, readable terminal output
-        print("\n" + "="*60)
-        print("🤖 MODEL RESPONSE:")
-        print("-" * 60)
-        print(output["response"])
-        print("\n" + "="*60)
-        
-        # Reduced context display (titles only)
-        print("📚 RETRIEVED SOURCES (Top 10):")
-        print("-" * 60)
-        for i, chunk in enumerate(output["context"]):
-            print(f"{i+1}. [{chunk['score']:.4f}] - {chunk['title']}")
-        print("="*60 + "\n")
+    app.run(debug=True, port=5000)

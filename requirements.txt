@@ -1,4 +1,6 @@
 openai
-pinecone
+pinecone-client
+langchain-openai
 pandas
 python-dotenv
+flask

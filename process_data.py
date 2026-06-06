@@ -63,23 +63,28 @@ def main():
                 "chunk": chunk,
                 "metadata": metadata
             })
-     #Prepare lists for batch embedding and upsert       
+    #Prepare lists for batch embedding and upsert       
     all_texts = [str(item['chunk']) for item in processed_data]
     all_metadata = [item['metadata'] for item in processed_data]
     all_ids = [str(item['id']) for item in processed_data]
     
-    print(f"Generating embeddings for {len(all_texts)} chunks...")
-    all_embeddings = emb.embed_documents(all_texts)
+    print(f"Embedding and upserting {len(all_texts)} chunks to Pinecone...")
     
     # Delete all existing vectors in the default namespace
     index.delete(delete_all=True)
-    
-    print(f"Upserting vectors to Pinecone...")
-    vectors_to_upsert = list(zip(all_ids, all_embeddings, all_metadata))
     batch_size = 200
-    for i in range(0, len(vectors_to_upsert), batch_size):
-        index.upsert(vectors=vectors_to_upsert[i : i + batch_size])
+    
+    for i in range(0, len(all_texts), batch_size):
+        batch_texts = all_texts[i : i + batch_size]
+        batch_ids = all_ids[i : i + batch_size]
+        batch_metadata = all_metadata[i : i + batch_size]
+        
+        batch_embeddings = emb.embed_documents(batch_texts)
+        vectors_to_upsert = list(zip(batch_ids, batch_embeddings, batch_metadata))
+        
+        index.upsert(vectors=vectors_to_upsert)
         
     print("Upsert complete.")
+
 if __name__ == "__main__":
     main()
