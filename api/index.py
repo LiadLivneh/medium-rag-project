@@ -10,11 +10,9 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# ==============================================================================
-# ⚠️ IMPORTANT: Update these 3 numbers to match what you used in process_data.py
-# ==============================================================================
-CHUNK_SIZE = 1024  
-OVERLAP_RATIO = 0.2
+CHUNK_SIZE = 512  
+OVERLAP = 100
+OVERLAP_RATIO = OVERLAP / CHUNK_SIZE
 TOP_K = 20
 
 # Initialize Models and DB (Doing this globally keeps the app fast)
@@ -50,7 +48,7 @@ def stats():
 
 @app.route('/api/prompt', methods=['POST'])
 def prompt():
-    """Endpoint 1: Receives a question and returns the AI's answer + context."""
+    """Endpoint 1: Receives a question and returns the agent's answer + context."""
     data = request.get_json()
     
     # Safety check in case the user sends a bad request
@@ -59,10 +57,9 @@ def prompt():
         
     query_text = data["question"]
     
-    # 2. Embed the question
+    # Embed the question and query Pinecone
     query_embedding = emb.embed_query(query_text)
     
-    # 3. Query Pinecone
     results = index.query(
         vector=query_embedding,
         top_k=TOP_K,
@@ -72,7 +69,7 @@ def prompt():
     context_chunks = []
     context_text_for_llm = ""
     
-    # 4. Format the retrieved context
+    # Format the retrieved context
     for match in results.get('matches', []):
         meta = match.get('metadata', {})
         
@@ -103,13 +100,12 @@ def prompt():
     
     user_prompt = f"Context:\n{context_text_for_llm}\nUser query: {query_text}"
 
-    # 6. Call the LLM
+    # Call the LLM and return final output
     chat_response = llm.invoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt)
     ])
 
-    # 7. Return the final JSON payload exactly as requested
     final_output = {
         "response": chat_response.content,
         "context": context_chunks,
@@ -120,8 +116,3 @@ def prompt():
     }
     
     return jsonify(final_output)
-
-
-# This allows you to run `python api/index.py` in the terminal to test locally
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
