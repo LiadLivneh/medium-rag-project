@@ -5,7 +5,6 @@ from pinecone import Pinecone
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-# Load env variables for local testing (Vercel will inject these automatically online)
 load_dotenv()
 
 app = Flask(__name__)
@@ -15,7 +14,6 @@ OVERLAP = 100
 OVERLAP_RATIO = OVERLAP / CHUNK_SIZE
 TOP_K = 20
 
-# Initialize Models and DB (Doing this globally keeps the app fast)
 emb = AzureOpenAIEmbeddings(
     azure_endpoint="https://api.llmod.ai",
     api_key=os.environ.get("LLMOD_API_KEY"),
